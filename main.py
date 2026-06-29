@@ -1,18 +1,17 @@
-import os
-import subprocess
-import secrets
-import socket
+#!/usr/bin/env python3
 
-PORT = 8080
+import os
+import secrets
+import subprocess
+import time
+
+PORT = int(os.environ.get("PORT", "8080"))
+
 
 def run(cmd):
-    print(f"[+] {cmd}")
+    print(f"[+] {cmd}", flush=True)
     subprocess.run(cmd, shell=True, check=True)
 
-# بررسی دسترسی روت
-if os.geteuid() != 0:
-    print("این اسکریپت باید با sudo یا root اجرا شود.")
-    exit(1)
 
 # نصب پیش‌نیازها
 run("apt update")
@@ -25,57 +24,50 @@ if not os.path.exists("/opt/MTProxy"):
 # کامپایل
 run("cd /opt/MTProxy && make")
 
-# دانلود فایل‌های رسمی تلگرام
-run("curl -s https://core.telegram.org/getProxySecret -o /opt/MTProxy/objs/bin/proxy-secret")
-run("curl -s https://core.telegram.org/getProxyConfig -o /opt/MTProxy/objs/bin/proxy-multi.conf")
+# دانلود فایل‌های رسمی
+run(
+    "curl -s https://core.telegram.org/getProxySecret "
+    "-o /opt/MTProxy/objs/bin/proxy-secret"
+)
 
-# ساخت Secret
+run(
+    "curl -s https://core.telegram.org/getProxyConfig "
+    "-o /opt/MTProxy/objs/bin/proxy-multi.conf"
+)
+
+# ساخت secret
 secret = secrets.token_hex(16)
 
-# گرفتن IP عمومی
-ip = socket.gethostbyname(socket.gethostname())
+print("=" * 50)
+print("MTProxy configuration")
+print(f"PORT   : {PORT}")
+print(f"SECRET : {secret}")
+print("=" * 50)
+
+# اجرای MTProxy
+proc = subprocess.Popen(
+    [
+        "./mtproto-proxy",
+        "-u", "nobody",
+        "-p", "8888",
+        "-H", str(PORT),
+        "-S", secret,
+        "--aes-pwd", "proxy-secret",
+        "proxy-multi.conf",
+        "-M", "1",
+    ],
+    cwd="/opt/MTProxy/objs/bin",
+)
+
+print("[+] MTProxy started")
+
+# زنده نگه داشتن کانتینر
 try:
-    ip = subprocess.check_output(
-        "curl -s ifconfig.me",
-        shell=True,
-        text=True
-    ).strip()
-except:
-    pass
-
-# ساخت سرویس systemd
-service = f"""
-[Unit]
-Description=Telegram MTProxy
-After=network.target
-
-[Service]
-WorkingDirectory=/opt/MTProxy/objs/bin
-ExecStart=/opt/MTProxy/objs/bin/mtproto-proxy \
--u nobody \
--p 8888 \
--H {PORT} \
--S {secret} \
---aes-pwd proxy-secret proxy-multi.conf \
--M 1
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-with open("/etc/systemd/system/mtproxy.service", "w") as f:
-    f.write(service)
-
-run("systemctl daemon-reload")
-run("systemctl enable mtproxy")
-run("systemctl restart mtproxy")
-
-print("\n==========================")
-print("MTProxy نصب شد")
-print(f"IP: {ip}")
-print(f"PORT: {PORT}")
-print(f"SECRET: {secret}")
-print("\nلینک اتصال:")
-print(f"https://t.me/proxy?server={ip}&port={PORT}&secret={secret}")
-print("==========================")
+    while True:
+        ret = proc.poll()
+        if ret is not None:
+            print(f"[!] MTProxy exited with code {ret}")
+            break
+        time.sleep(5)
+except KeyboardInterrupt:
+    proc.terminate()
