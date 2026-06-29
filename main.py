@@ -10,7 +10,6 @@ import threading
 from datetime import datetime
 
 # ===================== نصب خودکار وابستگی‌ها =====================
-
 def install_python_packages():
     required = ['psutil', 'flask']
     for pkg in required:
@@ -25,17 +24,18 @@ install_python_packages()
 import psutil
 from flask import Flask, render_template_string
 
-# ===================== تنظیمات پورت‌ها =====================
-
-# پورت پنل: اولویت با متغیر PANEL_PORT، سپس PORT (برای Railway)، در نهایت 5000
+# ===================== تنظیم هوشمند پورت‌ها =====================
+# پورت پنل: اولویت با PANEL_PORT، سپس PORT (برای Railway)، در نهایت 5000
 PANEL_PORT = int(os.environ.get("PANEL_PORT") or os.environ.get("PORT", "5000"))
-
-# پورت پروکسی: اولویت با PROXY_PORT، در غیر این صورت 8080 (یا هر پورت دیگه)
+# پورت پروکسی: اولویت با PROXY_PORT، در غیر این صورت 8080
 PROXY_PORT = int(os.environ.get("PROXY_PORT", "8080"))
 
-# جلوگیری از تداخل اگر هر دو یکسان باشن (در Railway باید متفاوت باشن)
+# اگر پورت‌ها با هم تداخل داشتند، پورت پروکسی را به 8081 تغییر بده
 if PANEL_PORT == PROXY_PORT:
-    PROXY_PORT = 8080  # در صورت تداخل، پروکسی رو به 8080 تغییر بده
+    PROXY_PORT = 8081
+    print(f"[!] Port conflict detected: panel and proxy both on {PANEL_PORT}. Proxy moved to {PROXY_PORT}")
+
+# (اختیاری) اگر کاربر خواست پورت دیگری برای پروکسی، می‌تواند متغیر PROXY_PORT را تنظیم کند
 
 SECRET = os.environ.get("SECRET", secrets.token_hex(16))
 
@@ -47,10 +47,8 @@ stats_lock = threading.Lock()
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
-# ===================== بدست آوردن آی‌پی عمومی =====================
-
+# ===================== دریافت آی‌پی عمومی =====================
 def get_public_ip():
-    """تلاش برای دریافت آی‌پی عمومی از چند سرویس"""
     import urllib.request
     services = [
         'http://ifconfig.me/ip',
@@ -65,12 +63,11 @@ def get_public_ip():
                     return ip
         except:
             continue
-    return None  # اگر هیچکدام جواب نداد
+    return os.environ.get("PUBLIC_IP", "UNKNOWN")
 
-PUBLIC_IP = get_public_ip() or os.environ.get("PUBLIC_IP", "UNKNOWN")
+PUBLIC_IP = get_public_ip()
 
 # ===================== نصب پیش‌نیازهای سیستمی و MTProxy =====================
-
 def run_cmd(cmd, check=True):
     log(f"Running: {cmd}")
     subprocess.run(cmd, shell=True, check=check)
@@ -87,8 +84,7 @@ def setup_system_and_proxy():
     run_cmd("curl -s https://core.telegram.org/getProxySecret -o /opt/MTProxy/objs/bin/proxy-secret")
     run_cmd("curl -s https://core.telegram.org/getProxyConfig -o /opt/MTProxy/objs/bin/proxy-multi.conf")
 
-# ===================== مدیریت پروکسی =====================
-
+# ===================== مدیریت پروکسی (Keepalive) =====================
 def start_proxy():
     global proxy_process, start_time, proxy_status
     with stats_lock:
@@ -150,7 +146,6 @@ def keepalive_loop():
         time.sleep(5)
 
 # ===================== آمار سیستم =====================
-
 def get_network_stats():
     try:
         net = psutil.net_io_counters()
@@ -180,7 +175,6 @@ def get_system_stats():
         return {"cpu": 0, "memory_percent": 0}
 
 # ===================== پنل وب =====================
-
 def create_panel():
     app = Flask(__name__)
 
@@ -283,8 +277,6 @@ def create_panel():
             return f"{b:.2f} PB"
 
         sys_stats = get_system_stats()
-
-        # ساخت لینک پروکسی به فرمت tg://
         tg_link = f"tg://proxy?server={PUBLIC_IP}&port={PROXY_PORT}&secret={SECRET}"
 
         return render_template_string(
@@ -309,18 +301,18 @@ def create_panel():
     log(f"Panel started on port {PANEL_PORT}")
 
 # ===================== نمایش لینک‌ها در لاگ =====================
-
 def print_links():
     log("=" * 60)
     log("MTProxy is running. Use the following links:")
-    log(f"Panel URL: http://{PUBLIC_IP}:{PANEL_PORT}")
-    log(f"Proxy Link (add to Telegram): tg://proxy?server={PUBLIC_IP}&port={PROXY_PORT}&secret={SECRET}")
+    panel_url = f"http://{PUBLIC_IP}:{PANEL_PORT}"
+    log(f"Panel URL: {panel_url}")
+    tg_link = f"tg://proxy?server={PUBLIC_IP}&port={PROXY_PORT}&secret={SECRET}"
+    log(f"Proxy Link (add to Telegram): {tg_link}")
     log(f"Server: {PUBLIC_IP}:{PROXY_PORT}")
     log(f"Secret: {SECRET}")
     log("=" * 60)
 
 # ===================== تابع اصلی =====================
-
 def main():
     log("=== MTProxy Auto-Setup & Monitor ===")
 
